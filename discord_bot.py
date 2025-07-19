@@ -28,6 +28,7 @@ class TagGameBot(commands.Bot):
         # Game state
         self.active_challenges: Dict[int, Dict] = {}
         self.challenge_messages: Dict[str, str] = {}
+        self.challenge_channels: Dict[int, int] = {}  # Store channel ID for each challenge
 
     async def setup_hook(self):
         """Setup bot commands"""
@@ -40,6 +41,85 @@ class TagGameBot(commands.Bot):
 
         # Set bot status
         await self.change_presence(activity=discord.Game(name="LAN Tag Game"))
+        
+        # Start the challenge timeout monitor
+        self.loop.create_task(self.monitor_challenge_timeouts())
+
+    async def monitor_challenge_timeouts(self):
+        """Monitor active challenges and auto-resolve timeouts"""
+        print("🔍 Challenge timeout monitor started")
+        while True:
+            try:
+                current_time = time.time()
+                expired_challenges = []
+                
+                # Debug: Print active challenges
+                if self.active_challenges:
+                    print(f"🔍 Monitoring {len(self.active_challenges)} active challenges")
+                    for player_id, challenge in self.active_challenges.items():
+                        time_elapsed = current_time - challenge["start_time"]
+                        time_remaining = challenge["timeout"] - time_elapsed
+                        print(f"  Player {player_id}: {time_elapsed:.1f}s elapsed, {time_remaining:.1f}s remaining")
+                        
+                        if time_elapsed > challenge["timeout"]:
+                            expired_challenges.append(player_id)
+                            print(f"  ⏰ Player {player_id} challenge expired!")
+                
+                # Resolve expired challenges
+                for player_id in expired_challenges:
+                    print(f"🔄 Resolving timeout for player {player_id}")
+                    await self.resolve_timeout_challenge(player_id)
+                
+                # Wait before next check
+                await asyncio.sleep(1)  # Check every second
+                
+            except Exception as e:
+                print(f"❌ Error in challenge timeout monitor: {e}")
+                await asyncio.sleep(5)  # Wait longer on error
+
+    async def resolve_timeout_challenge(self, player_id: int):
+        """Resolve a challenge that has timed out"""
+        print(f"🔄 Starting timeout resolution for player {player_id}")
+        
+        if player_id not in self.active_challenges:
+            print(f"❌ Player {player_id} not found in active challenges")
+            return
+            
+        challenge = self.active_challenges[player_id]
+        print(f"📋 Challenge details: {challenge}")
+        
+        # Auto-fail the challenge (player didn't respond in time)
+        result = self.game.resolve_dodge_challenge(
+            player_id, challenge["challenge_id"], False
+        )
+        print(f"🎯 Resolve result: {result}")
+        
+        # Send timeout message to the channel
+        channel_id = self.challenge_channels.get(player_id)
+        print(f"📢 Channel ID for timeout message: {channel_id}")
+        
+        if channel_id:
+            channel = self.get_channel(channel_id)
+            if channel:
+                embed = discord.Embed(
+                    title="⏰ Challenge Timeout!",
+                    description=f"<@{player_id}> didn't respond in time and was tagged!",
+                    color=discord.Color.red(),
+                )
+                if "new_it" in result:
+                    embed.add_field(name="New 'It'", value=result["new_it"], inline=True)
+                await channel.send(embed=embed)
+                print(f"✅ Timeout message sent to channel {channel_id}")
+            else:
+                print(f"❌ Could not find channel {channel_id}")
+        else:
+            print(f"❌ No channel ID found for player {player_id}")
+        
+        # Clean up
+        del self.active_challenges[player_id]
+        if player_id in self.challenge_channels:
+            del self.challenge_channels[player_id]
+        print(f"🧹 Cleaned up challenge data for player {player_id}")
 
     async def on_command_error(self, ctx, error):
         """Handle command errors"""
@@ -215,6 +295,9 @@ class GameCommands(commands.Cog):
                 "start_time": time.time(),
                 "timeout": self.bot.config["game_settings"]["dodge_timeout"],
             }
+            
+            # Store channel for timeout notifications
+            self.bot.challenge_channels[user_id] = ctx.channel.id
 
             await ctx.send(embed=embed)
         else:
@@ -264,6 +347,8 @@ class GameCommands(commands.Cog):
         # Clean up challenge
         if ctx.author.id in self.bot.active_challenges:
             del self.bot.active_challenges[ctx.author.id]
+        if ctx.author.id in self.bot.challenge_channels:
+            del self.bot.challenge_channels[ctx.author.id]
 
     @commands.command(name="players")
     async def list_players(self, ctx):

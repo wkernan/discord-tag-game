@@ -38,6 +38,7 @@ class TagGame:
         self.min_players = config["game_settings"]["min_players"]
         self.max_players = config["game_settings"]["max_players"]
         self.active_challenges: Dict[int, Dict] = {}
+        self.last_tagged_by: Dict[int, int] = {}  # Track who each player last tagged
 
     def add_player(
         self, discord_id: int, discord_name: str, lan_id: Optional[str] = None
@@ -91,7 +92,7 @@ class TagGame:
         if self.state == GameState.PAUSED:
             self.state = GameState.PLAYING
 
-    def _select_new_it(self):
+    def _select_new_it(self, specific_player_id: Optional[int] = None):
         """Select a new player to be 'it'"""
         if not self.players:
             return
@@ -100,12 +101,19 @@ class TagGame:
         if self.current_it:
             self.current_it.is_it = False
 
-        # Select new 'it' randomly
-        available_players = [p for p in self.players.values() if not p.is_tagged]
-        if available_players:
-            self.current_it = random.choice(available_players)
-            self.current_it.is_it = True
-            self.current_it.last_active = time.time()
+        if specific_player_id is not None:
+            # Make the specific player 'it' (when they get tagged)
+            if specific_player_id in self.players:
+                self.current_it = self.players[specific_player_id]
+                self.current_it.is_it = True
+                self.current_it.last_active = time.time()
+        else:
+            # Select new 'it' randomly (for game start)
+            available_players = [p for p in self.players.values() if not p.is_tagged]
+            if available_players:
+                self.current_it = random.choice(available_players)
+                self.current_it.is_it = True
+                self.current_it.last_active = time.time()
 
     def attempt_tag(self, tagger_id: int, target_id: int) -> Dict:
         """Attempt to tag another player"""
@@ -126,6 +134,10 @@ class TagGame:
 
         if target.is_tagged:
             return {"success": False, "message": "Player is already tagged"}
+
+        # Check if tagger is trying to tag the same person they tagged last time
+        if tagger_id in self.last_tagged_by and self.last_tagged_by[tagger_id] == target_id:
+            return {"success": False, "message": "You must tag a different player than your last target"}
 
         # Create dodge challenge
         challenge_id = f"{target_id}_{int(time.time())}"
@@ -174,8 +186,14 @@ class TagGame:
             tagger.score += 20
             target.score -= 5
 
+            # Clear the tagger's "tagged" status since they successfully passed it on
+            tagger.is_tagged = False
+
+            # Record that the tagger successfully tagged this target
+            self.last_tagged_by[challenge["tagger_id"]] = target_id
+
             # Switch 'it' to the tagged player
-            self._select_new_it()
+            self._select_new_it(target_id)
 
             result = {
                 "success": True,
