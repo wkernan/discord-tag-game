@@ -1,0 +1,18 @@
+{
+    "discord_token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+    "guild_id": "YOUR_GUILD_ID_HERE",
+    "tag_channel_id": "YOUR_TAG_CHANNEL_ID_HERE",
+    "game_settings": {
+        "tag_timeout": 300,
+        "dodge_timeout": 10,
+        "min_players": 2,
+        "max_players": 20,
+        "round_duration": 600
+    },
+    "dodge_mechanisms": [
+        "math_challenge",
+        "rock_paper_scissors", 
+        "word_scramble",
+        "button_mash"
+    ]
+} 
