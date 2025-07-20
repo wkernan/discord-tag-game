@@ -42,6 +42,9 @@ class TagGameBot(commands.Bot):
         # Set bot status
         await self.change_presence(activity=discord.Game(name="LAN Tag Game"))
         
+        # Start timeout monitoring
+        self.loop.create_task(self.monitor_it_timeout())
+        
         # Start the challenge timeout monitor
         self.loop.create_task(self.monitor_challenge_timeouts())
 
@@ -120,6 +123,39 @@ class TagGameBot(commands.Bot):
         if player_id in self.challenge_channels:
             del self.challenge_channels[player_id]
         print(f"🧹 Cleaned up challenge data for player {player_id}")
+
+    async def monitor_it_timeout(self):
+        """Monitor for 'it' player timeouts"""
+        while True:
+            try:
+                if self.game.state.value == "playing" and self.game.current_it:
+                    timeout_result = self.game.check_it_timeout()
+                    print(f"🔍 IT timeout result: {timeout_result}")
+                    if timeout_result:
+                        # Find a channel to send the timeout message
+                        for guild in self.guilds:
+                            for channel in guild.text_channels:
+                                if channel.permissions_for(guild.me).send_messages:
+                                    embed = discord.Embed(
+                                        title="⏰ 'It' Player Timeout!",
+                                        description=f"{timeout_result['old_it']} didn't tag anyone within 5 minutes!",
+                                        color=discord.Color.orange()
+                                    )
+                                    embed.add_field(name="Penalty", value=f"{timeout_result['penalty']} points", inline=True)
+                                    
+                                    if timeout_result.get("game_ended"):
+                                        embed.add_field(name="Game Status", value="Game ended - no available players", inline=True)
+                                    elif timeout_result["new_it"]:
+                                        embed.add_field(name="New 'It'", value=timeout_result["new_it"], inline=True)
+                                    
+                                    await channel.send(embed=embed)
+                                    break
+                            break
+                
+                await asyncio.sleep(5)  # Check every 30 seconds
+            except Exception as e:
+                print(f"❌ Error in 'it' timeout monitor: {e}")
+                await asyncio.sleep(5)
 
     async def on_command_error(self, ctx, error):
         """Handle command errors"""
@@ -228,6 +264,28 @@ class GameCommands(commands.Cog):
         embed.add_field(
             name="Round Duration", value=f"{status['round_duration']}s", inline=True
         )
+        
+        # Add attempt information if someone is "it"
+        if self.bot.game.current_it:
+            it_player = self.bot.game.current_it
+            
+            # Show time remaining for "it" player
+            if self.bot.game.it_start_time:
+                time_elapsed = time.time() - self.bot.game.it_start_time
+                time_remaining = max(0, self.bot.game.it_timeout - time_elapsed)
+                minutes = int(time_remaining // 60)
+                seconds = int(time_remaining % 60)
+                embed.add_field(name="'It' Time Remaining", value=f"{minutes}:{seconds:02d}", inline=True)
+            
+            if it_player.tag_attempts:
+                attempts_info = []
+                for target_id, attempts in it_player.tag_attempts.items():
+                    if target_id in self.bot.game.players:
+                        target_name = self.bot.game.players[target_id].discord_name
+                        attempts_info.append(f"{target_name}: {attempts}/3")
+                if attempts_info:
+                    embed.add_field(name="Tag Attempts", value="\n".join(attempts_info), inline=False)
+        
         await ctx.send(embed=embed)
 
     @commands.command(name="leaderboard")
@@ -377,6 +435,35 @@ class GameCommands(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @commands.command(name="attempts")
+    async def show_attempts(self, ctx):
+        """Show current 'it' player's tag attempts"""
+        if not self.bot.game.current_it:
+            await ctx.send("❌ No one is currently 'it'!")
+            return
+            
+        it_player = self.bot.game.current_it
+        if not it_player.tag_attempts:
+            await ctx.send(f"🎯 {it_player.discord_name} hasn't attempted to tag anyone yet!")
+            return
+            
+        embed = discord.Embed(
+            title=f"🎯 {it_player.discord_name}'s Tag Attempts",
+            color=discord.Color.orange()
+        )
+        
+        for target_id, attempts in it_player.tag_attempts.items():
+            if target_id in self.bot.game.players:
+                target_name = self.bot.game.players[target_id].discord_name
+                attempts_remaining = 3 - attempts
+                embed.add_field(
+                    name=f"Target: {target_name}",
+                    value=f"Attempts: {attempts}/3 ({attempts_remaining} remaining)",
+                    inline=True
+                )
+        
+        await ctx.send(embed=embed)
+
     @commands.command(name="gamehelp")
     async def show_help(self, ctx):
         """Show help information"""
@@ -395,6 +482,7 @@ class GameCommands(commands.Cog):
             ("!leaderboard", "Show leaderboard"),
             ("!tag @player", "Tag another player"),
             ("!dodge answer", "Attempt to dodge a challenge"),
+            ("!attempts", "Show current 'it' player's tag attempts"),
             ("!players", "List all players"),
             ("!gamehelp", "Show this help message"),
         ]

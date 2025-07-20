@@ -60,19 +60,12 @@ class DodgeMechanisms:
         question = f"Unscramble this word: {scrambled}"
         return question, word.lower()
 
-    async def button_mash(self) -> Tuple[str, str]:
-        """Generate a button mashing challenge"""
-        target_clicks = random.randint(5, 15)
-        question = f"Click the button {target_clicks} times quickly!"
-        return question, str(target_clicks)
-
     async def get_random_challenge(self) -> Tuple[str, str, str]:
         """Get a random dodge challenge"""
         challenges = [
             (self.math_challenge, "Math Challenge"),
             (self.rock_paper_scissors, "Rock, Paper, Scissors"),
             (self.word_scramble, "Word Scramble"),
-            (self.button_mash, "Button Mash"),
         ]
 
         challenge_func, challenge_name = random.choice(challenges)
@@ -104,10 +97,5 @@ class DodgeMechanisms:
             return False
         elif challenge_type == "Word Scramble":
             return actual == expected
-        elif challenge_type == "Button Mash":
-            try:
-                return int(actual) >= int(expected)
-            except ValueError:
-                return False
 
         return False

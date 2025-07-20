@@ -24,6 +24,11 @@ class Player:
     tags_received: int = 0
     dodges_successful: int = 0
     last_active: float = 0
+    tag_attempts: Dict[int, int] = None  # Track attempts per target: {target_id: attempts}
+    
+    def __post_init__(self):
+        if self.tag_attempts is None:
+            self.tag_attempts = {}
 
 
 class TagGame:
@@ -33,8 +38,10 @@ class TagGame:
         self.players: Dict[int, Player] = {}
         self.current_it: Optional[Player] = None
         self.game_start_time: Optional[float] = None
+        self.it_start_time: Optional[float] = None  # Track when current "it" started
         self.round_duration = config["game_settings"]["round_duration"]
         self.tag_timeout = config["game_settings"]["tag_timeout"]
+        self.it_timeout = config["game_settings"]["it_timeout"]
         self.min_players = config["game_settings"]["min_players"]
         self.max_players = config["game_settings"]["max_players"]
         self.active_challenges: Dict[int, Dict] = {}
@@ -82,6 +89,12 @@ class TagGame:
         self.state = GameState.FINISHED
         self.current_it = None
         self.active_challenges.clear()
+        
+        # Reset all player states
+        for player in self.players.values():
+            player.is_it = False
+            player.is_tagged = False
+            player.tag_attempts.clear()
 
     def pause_game(self):
         """Pause the tag game"""
@@ -107,6 +120,10 @@ class TagGame:
                 self.current_it = self.players[specific_player_id]
                 self.current_it.is_it = True
                 self.current_it.last_active = time.time()
+                # Reset attempt counters for new 'it' player
+                self.current_it.tag_attempts.clear()
+                # Set start time for new 'it' player
+                self.it_start_time = time.time()
         else:
             # Select new 'it' randomly (for game start)
             available_players = [p for p in self.players.values() if not p.is_tagged]
@@ -114,6 +131,10 @@ class TagGame:
                 self.current_it = random.choice(available_players)
                 self.current_it.is_it = True
                 self.current_it.last_active = time.time()
+                # Reset attempt counters for new 'it' player
+                self.current_it.tag_attempts.clear()
+                # Set start time for new 'it' player
+                self.it_start_time = time.time()
 
     def attempt_tag(self, tagger_id: int, target_id: int) -> Dict:
         """Attempt to tag another player"""
@@ -139,6 +160,15 @@ class TagGame:
         if tagger_id in self.last_tagged_by and self.last_tagged_by[tagger_id] == target_id:
             return {"success": False, "message": "You must tag a different player than your last target"}
 
+        # Check tag attempts limit (3 attempts per target)
+        attempts = tagger.tag_attempts.get(target_id, 0)
+        if attempts >= 3:
+            return {"success": False, "message": f"You've already attempted to tag {target.discord_name} 3 times. Try tagging someone else!"}
+
+        # Increment attempt counter
+        tagger.tag_attempts[target_id] = attempts + 1
+        attempts_remaining = 3 - attempts - 1
+
         # Create dodge challenge
         challenge_id = f"{target_id}_{int(time.time())}"
         self.active_challenges[target_id] = {
@@ -150,7 +180,7 @@ class TagGame:
 
         return {
             "success": True,
-            "message": f"{target.discord_name} has been tagged! They have {self.config['game_settings']['dodge_timeout']} seconds to dodge!",
+            "message": f"{target.discord_name} has been tagged! They have {self.config['game_settings']['dodge_timeout']} seconds to dodge! (Attempt {attempts + 1}/3, {attempts_remaining} remaining)",
             "challenge_id": challenge_id,
             "target_id": target_id,
         }
@@ -191,6 +221,10 @@ class TagGame:
 
             # Record that the tagger successfully tagged this target
             self.last_tagged_by[challenge["tagger_id"]] = target_id
+            
+            # Reset attempt counter for this target since tag was successful
+            if target_id in tagger.tag_attempts:
+                del tagger.tag_attempts[target_id]
 
             # Switch 'it' to the tagged player
             self._select_new_it(target_id)
@@ -259,3 +293,43 @@ class TagGame:
             return False
 
         return time.time() - self.game_start_time > self.round_duration
+        
+    def check_it_timeout(self) -> Optional[Dict]:
+        """Check if the current 'it' player has timed out"""
+        if not self.current_it or not self.it_start_time:
+            return None
+            
+        current_time = time.time()
+        if current_time - self.it_start_time > self.it_timeout:
+            # "It" player has timed out
+            old_it = self.current_it
+            old_it.score -= 10  # Penalty for not tagging anyone
+            
+            # Select new "it" randomly
+            available_players = [p for p in self.players.values() if not p.is_tagged and p != old_it]
+            if available_players:
+                new_it = random.choice(available_players)
+                self.current_it = new_it
+                self.current_it.is_it = True
+                self.current_it.last_active = current_time
+                self.current_it.tag_attempts.clear()
+                self.it_start_time = current_time
+                
+                return {
+                    "timeout": True,
+                    "old_it": old_it.discord_name,
+                    "new_it": new_it.discord_name,
+                    "penalty": -10
+                }
+            else:
+                # No available players, end the game
+                self.stop_game()
+                return {
+                    "timeout": True,
+                    "old_it": old_it.discord_name,
+                    "new_it": None,
+                    "penalty": -10,
+                    "game_ended": True
+                }
+        
+        return None

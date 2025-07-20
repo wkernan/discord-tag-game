@@ -9,10 +9,11 @@ A fun Discord bot-powered tag game! Players join through Discord, and when someo
   - Math problems
   - Rock, Paper, Scissors
   - Word scrambles
-  - Button mashing
 - **Scoring System**: Points for successful tags and dodges
 - **Leaderboard**: Track player performance
 - **Real-time Game Status**: See who's "it" and active challenges
+- **Timeout System**: 5-minute limit for "it" players with automatic replacement
+- **Attempt Limits**: Maximum 3 tag attempts per target per "it" player
 
 ## 🛠️ Setup
 
@@ -84,10 +85,11 @@ A fun Discord bot-powered tag game! Players join through Discord, and when someo
 - `!leave` - Leave the game
 - `!start` - Start the game (Admin only)
 - `!stop` - Stop the game (Admin only)
-- `!status` - Show current game status
+- `!status` - Show current game status (includes time remaining for "it" player)
 - `!leaderboard` - Show player rankings
 - `!tag @player` - Tag another player (only if you're "it")
 - `!dodge answer` - Attempt to dodge a challenge
+- `!attempts` - Show current 'it' player's tag attempts
 - `!players` - List all players
 - `!gamehelp` - Show help information
 
@@ -97,11 +99,14 @@ A fun Discord bot-powered tag game! Players join through Discord, and when someo
 2. **Start Phase**: Admin starts the game with `!start`
 3. **Playing Phase**: 
    - One player is randomly chosen as "it"
-   - "It" can tag other players with `!tag @player`
+   - "It" can tag other players with `!tag @player` (max 3 attempts per player)
+   - "It" has 5 minutes to tag someone or lose points and be replaced
    - Tagged players get a dodge challenge
    - Players have 10 seconds to complete the challenge with `!dodge answer`
    - If successful, they dodge and get points
    - If failed, they become "it" and the tagger gets points
+   - If a player successfully dodges all 3 attempts, they can't be tagged again by that "it"
+   - When the game stops, all players' "is_it" and "is_tagged" flags are reset
 4. **End Phase**: Game ends after the configured duration or when stopped
 
 ### Dodge Challenges
@@ -125,6 +130,7 @@ When tagged, players must complete one of these challenges:
 - **Successful Tag**: +20 points for the tagger, -5 points for the tagged
 - **Successful Dodge**: +10 points for the dodger
 - **Failed Dodge**: Tagged player becomes "it"
+- **Timeout Penalty**: -10 points for "it" player who doesn't tag anyone within 5 minutes
 
 ## ⚙️ Configuration
 
