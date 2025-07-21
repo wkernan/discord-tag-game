@@ -142,7 +142,6 @@ Edit `config.json` to customize game settings:
     "guild_id": "YOUR_SERVER_ID",
     "tag_channel_id": "YOUR_CHANNEL_ID",
     "game_settings": {
-        "tag_timeout": 300,        // Time limit for tags (seconds)
         "dodge_timeout": 10,       // Time limit for dodge challenges (seconds)
         "min_players": 2,          // Minimum players to start
         "max_players": 20,         // Maximum players allowed

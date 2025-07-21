@@ -3,7 +3,7 @@ from discord.ext import commands
 import json
 import asyncio
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 from tag_game import TagGame
 from dodge_mechanisms import DodgeMechanisms
@@ -80,15 +80,48 @@ class TagGameBot(commands.Bot):
                 print(f"❌ Error in challenge timeout monitor: {e}")
                 await asyncio.sleep(5)  # Wait longer on error
 
+    def _validate_timeout_challenge(self, player_id: int) -> Optional[Dict]:
+        """Validate that a timeout challenge exists for the player"""
+        if player_id not in self.active_challenges:
+            return None
+        return self.active_challenges[player_id]
+
+    def _create_timeout_embed(self, player_id: int, result: Dict) -> discord.Embed:
+        """Create a Discord embed for a timeout challenge"""
+        embed = discord.Embed(
+            title="⏰ Challenge Timeout!",
+            description=f"<@{player_id}> didn't respond in time and was tagged!",
+            color=discord.Color.red(),
+        )
+        if "new_it" in result:
+            embed.add_field(name="New 'It'", value=result["new_it"], inline=True)
+        return embed
+
+    async def _send_timeout_message(self, channel_id: int, embed: discord.Embed) -> bool:
+        """Send timeout message to the specified channel"""
+        channel = self.get_channel(channel_id)
+        if channel:
+            await channel.send(embed=embed)
+            return True
+        return False
+
+    def _cleanup_timeout_challenge(self, player_id: int):
+        """Clean up timeout challenge data for a player"""
+        if player_id in self.active_challenges:
+            del self.active_challenges[player_id]
+        if player_id in self.challenge_channels:
+            del self.challenge_channels[player_id]
+
     async def resolve_timeout_challenge(self, player_id: int):
         """Resolve a challenge that has timed out"""
         print(f"🔄 Starting timeout resolution for player {player_id}")
         
-        if player_id not in self.active_challenges:
+        # Validate challenge exists
+        challenge = self._validate_timeout_challenge(player_id)
+        if not challenge:
             print(f"❌ Player {player_id} not found in active challenges")
             return
             
-        challenge = self.active_challenges[player_id]
         print(f"📋 Challenge details: {challenge}")
         
         # Auto-fail the challenge (player didn't respond in time)
@@ -102,57 +135,65 @@ class TagGameBot(commands.Bot):
         print(f"📢 Channel ID for timeout message: {channel_id}")
         
         if channel_id:
-            channel = self.get_channel(channel_id)
-            if channel:
-                embed = discord.Embed(
-                    title="⏰ Challenge Timeout!",
-                    description=f"<@{player_id}> didn't respond in time and was tagged!",
-                    color=discord.Color.red(),
-                )
-                if "new_it" in result:
-                    embed.add_field(name="New 'It'", value=result["new_it"], inline=True)
-                await channel.send(embed=embed)
+            embed = self._create_timeout_embed(player_id, result)
+            success = await self._send_timeout_message(channel_id, embed)
+            if success:
                 print(f"✅ Timeout message sent to channel {channel_id}")
             else:
                 print(f"❌ Could not find channel {channel_id}")
         else:
             print(f"❌ No channel ID found for player {player_id}")
         
-        # Clean up
-        del self.active_challenges[player_id]
-        if player_id in self.challenge_channels:
-            del self.challenge_channels[player_id]
+        # Clean up challenge data
+        self._cleanup_timeout_challenge(player_id)
         print(f"🧹 Cleaned up challenge data for player {player_id}")
+
+    def _should_check_it_timeout(self) -> bool:
+        """Check if we should monitor for 'it' player timeouts"""
+        return self.game.state.value == "playing" and self.game.current_it
+
+    def _create_it_timeout_embed(self, timeout_result: Dict) -> discord.Embed:
+        """Create a Discord embed for 'it' player timeout"""
+        embed = discord.Embed(
+            title="⏰ 'It' Player Timeout!",
+            description=f"{timeout_result['old_it']} didn't tag anyone within 5 minutes!",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Penalty", value=f"{timeout_result['penalty']} points", inline=True)
+        
+        if timeout_result.get("game_ended"):
+            embed.add_field(name="Game Status", value="Game ended - no available players", inline=True)
+        elif timeout_result["new_it"]:
+            embed.add_field(name="New 'It'", value=timeout_result["new_it"], inline=True)
+        
+        return embed
+
+    def _find_channel_for_timeout_message(self) -> Optional[discord.TextChannel]:
+        """Find a suitable channel to send timeout messages"""
+        for guild in self.guilds:
+            for channel in guild.text_channels:
+                if channel.permissions_for(guild.me).send_messages:
+                    return channel
+        return None
+
+    async def _send_it_timeout_message(self, timeout_result: Dict):
+        """Send 'it' player timeout message to a suitable channel"""
+        channel = self._find_channel_for_timeout_message()
+        if channel:
+            embed = self._create_it_timeout_embed(timeout_result)
+            await channel.send(embed=embed)
 
     async def monitor_it_timeout(self):
         """Monitor for 'it' player timeouts"""
         while True:
             try:
-                if self.game.state.value == "playing" and self.game.current_it:
+                if self._should_check_it_timeout():
                     timeout_result = self.game.check_it_timeout()
                     print(f"🔍 IT timeout result: {timeout_result}")
                     if timeout_result:
-                        # Find a channel to send the timeout message
-                        for guild in self.guilds:
-                            for channel in guild.text_channels:
-                                if channel.permissions_for(guild.me).send_messages:
-                                    embed = discord.Embed(
-                                        title="⏰ 'It' Player Timeout!",
-                                        description=f"{timeout_result['old_it']} didn't tag anyone within 5 minutes!",
-                                        color=discord.Color.orange()
-                                    )
-                                    embed.add_field(name="Penalty", value=f"{timeout_result['penalty']} points", inline=True)
-                                    
-                                    if timeout_result.get("game_ended"):
-                                        embed.add_field(name="Game Status", value="Game ended - no available players", inline=True)
-                                    elif timeout_result["new_it"]:
-                                        embed.add_field(name="New 'It'", value=timeout_result["new_it"], inline=True)
-                                    
-                                    await channel.send(embed=embed)
-                                    break
-                            break
+                        await self._send_it_timeout_message(timeout_result)
                 
-                await asyncio.sleep(5)  # Check every 30 seconds
+                await asyncio.sleep(5)  # Check every 5 seconds
             except Exception as e:
                 print(f"❌ Error in 'it' timeout monitor: {e}")
                 await asyncio.sleep(5)
@@ -170,6 +211,51 @@ class TagGameBot(commands.Bot):
 class GameCommands(commands.Cog):
     def __init__(self, bot: TagGameBot):
         self.bot = bot
+
+    def _parse_target_mention(self, target: str) -> Optional[int]:
+        """Parse and validate a Discord mention to extract user ID"""
+        if not target.startswith("<@") or not target.endswith(">"):
+            return None
+
+        try:
+            user_id = int(target.strip("<@!>"))
+            return user_id
+        except ValueError:
+            return None
+
+    def _create_tag_embed(self, result: Dict, user_id: int, author_name: str, challenge: tuple) -> discord.Embed:
+        """Create a Discord embed for a tag attempt"""
+        embed = discord.Embed(
+            title="🏃 Tag Attempt!",
+            description=result["message"],
+            color=discord.Color.orange(),
+        )
+        embed.add_field(name="Target", value=f"<@{user_id}>", inline=True)
+        embed.add_field(name="Tagger", value=author_name, inline=True)
+        embed.add_field(
+            name="Time Limit",
+            value=f"{self.bot.config['game_settings']['dodge_timeout']}s",
+            inline=True,
+        )
+        embed.add_field(name="Dodge Challenge", value=challenge[0], inline=False)
+        embed.add_field(name="Challenge Type", value=challenge[2], inline=True)
+        
+        return embed
+
+    def _store_challenge_info(self, user_id: int, result: Dict, challenge: tuple):
+        """Store challenge information for the target player"""
+        self.bot.active_challenges[user_id] = {
+            "challenge_id": result["challenge_id"],
+            "question": challenge[0],
+            "answer": challenge[1],
+            "challenge_type": challenge[2],
+            "start_time": time.time(),
+            "timeout": self.bot.config["game_settings"]["dodge_timeout"],
+        }
+
+    def _store_channel_info(self, user_id: int, channel_id: int):
+        """Store channel information for timeout notifications"""
+        self.bot.challenge_channels[user_id] = channel_id
 
     @commands.command(name="join")
     async def join_game(self, ctx):
@@ -311,68 +397,74 @@ class GameCommands(commands.Cog):
     @commands.command(name="tag")
     async def tag_player(self, ctx, target):
         """Tag another player"""
-        # Convert mention to user ID
-        if not target.startswith("<@") or not target.endswith(">"):
+        # Parse target mention
+        user_id = self._parse_target_mention(target)
+        if user_id is None:
             await ctx.send("❌ Please mention a player with @player")
             return
 
-        # Extract user ID from mention
-        try:
-            user_id = int(target.strip("<@!>"))
-        except ValueError:
-            await ctx.send("❌ Invalid player mention")
-            return
-
+        # Attempt the tag
         result = self.bot.game.attempt_tag(ctx.author.id, user_id)
 
         if result["success"]:
-            embed = discord.Embed(
-                title="🏃 Tag Attempt!",
-                description=result["message"],
-                color=discord.Color.orange(),
-            )
-            embed.add_field(name="Target", value=f"<@{user_id}>", inline=True)
-            embed.add_field(name="Tagger", value=ctx.author.display_name, inline=True)
-            embed.add_field(
-                name="Time Limit",
-                value=f"{self.bot.config['game_settings']['dodge_timeout']}s",
-                inline=True,
-            )
-
-            # Create dodge challenge
+            # Get dodge challenge
             challenge = await self.bot.dodge_mechanisms.get_random_challenge()
-            embed.add_field(name="Dodge Challenge", value=challenge[0], inline=False)
-            embed.add_field(name="Challenge Type", value=challenge[2], inline=True)
-
-            # Store challenge info
-            self.bot.active_challenges[user_id] = {
-                "challenge_id": result["challenge_id"],
-                "question": challenge[0],
-                "answer": challenge[1],
-                "challenge_type": challenge[2],
-                "start_time": time.time(),
-                "timeout": self.bot.config["game_settings"]["dodge_timeout"],
-            }
+            
+            # Create embed
+            embed = self._create_tag_embed(result, user_id, ctx.author.display_name, challenge)
+            
+            # Store challenge information
+            self._store_challenge_info(user_id, result, challenge)
             
             # Store channel for timeout notifications
-            self.bot.challenge_channels[user_id] = ctx.channel.id
+            self._store_channel_info(user_id, ctx.channel.id)
 
             await ctx.send(embed=embed)
         else:
             await ctx.send(f"❌ {result['message']}")
 
+    def _validate_dodge_challenge(self, player_id: int) -> Optional[Dict]:
+        """Validate that a player has an active dodge challenge"""
+        if player_id not in self.bot.active_challenges:
+            return None
+        return self.bot.active_challenges[player_id]
+
+    def _check_challenge_expired(self, challenge: Dict) -> bool:
+        """Check if a challenge has expired"""
+        return time.time() - challenge["start_time"] > challenge["timeout"]
+
+    def _create_dodge_result_embed(self, result: Dict) -> discord.Embed:
+        """Create a Discord embed for dodge challenge result"""
+        embed = discord.Embed(
+            title="🎯 Dodge Result",
+            description=result["message"],
+            color=discord.Color.green() if result["dodged"] else discord.Color.red(),
+        )
+
+        if not result["dodged"] and "new_it" in result:
+            embed.add_field(name="New 'It'", value=result["new_it"], inline=True)
+
+        return embed
+
+    def _cleanup_dodge_challenge(self, player_id: int):
+        """Clean up dodge challenge data for a player"""
+        if player_id in self.bot.active_challenges:
+            del self.bot.active_challenges[player_id]
+        if player_id in self.bot.challenge_channels:
+            del self.bot.challenge_channels[player_id]
+
     @commands.command(name="dodge")
     async def dodge_challenge(self, ctx, answer: str):
         """Attempt to dodge a tag challenge"""
-        if ctx.author.id not in self.bot.active_challenges:
+        # Validate challenge exists
+        challenge = self._validate_dodge_challenge(ctx.author.id)
+        if not challenge:
             await ctx.send("❌ You don't have an active challenge to dodge!")
             return
 
-        challenge = self.bot.active_challenges[ctx.author.id]
-
         # Check if challenge is expired
-        if time.time() - challenge["start_time"] > challenge["timeout"]:
-            del self.bot.active_challenges[ctx.author.id]
+        if self._check_challenge_expired(challenge):
+            self._cleanup_dodge_challenge(ctx.author.id)
             await ctx.send("❌ Challenge expired! You were tagged!")
             return
 
@@ -387,26 +479,13 @@ class GameCommands(commands.Cog):
         )
 
         if result["success"]:
-            embed = discord.Embed(
-                title="🎯 Dodge Result",
-                description=result["message"],
-                color=discord.Color.green()
-                if result["dodged"]
-                else discord.Color.red(),
-            )
-
-            if not result["dodged"] and "new_it" in result:
-                embed.add_field(name="New 'It'", value=result["new_it"], inline=True)
-
+            embed = self._create_dodge_result_embed(result)
             await ctx.send(embed=embed)
         else:
             await ctx.send(f"❌ {result['message']}")
 
         # Clean up challenge
-        if ctx.author.id in self.bot.active_challenges:
-            del self.bot.active_challenges[ctx.author.id]
-        if ctx.author.id in self.bot.challenge_channels:
-            del self.bot.challenge_channels[ctx.author.id]
+        self._cleanup_dodge_challenge(ctx.author.id)
 
     @commands.command(name="players")
     async def list_players(self, ctx):

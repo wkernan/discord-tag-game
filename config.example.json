@@ -3,16 +3,15 @@
     "guild_id": "YOUR_GUILD_ID_HERE",
     "tag_channel_id": "YOUR_TAG_CHANNEL_ID_HERE",
     "game_settings": {
-        "tag_timeout": 300,
-        "dodge_timeout": 10,
+        "dodge_timeout": 30,
         "min_players": 2,
         "max_players": 20,
-        "round_duration": 600
+        "round_duration": 600,
+        "it_timeout": 300
     },
     "dodge_mechanisms": [
         "math_challenge",
         "rock_paper_scissors", 
-        "word_scramble",
-        "button_mash"
+        "word_scramble"
     ]
 } 
