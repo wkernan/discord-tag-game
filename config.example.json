@@ -11,9 +11,6 @@
         "it_timeout": 300
     },
     "dodge_mechanisms": [
-        "math_challenge",
-        "rock_paper_scissors", 
-        "word_scramble",
         "ai_trivia_challenge"
     ]
 } 
