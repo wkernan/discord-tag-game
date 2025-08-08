@@ -2,6 +2,7 @@
     "discord_token": "YOUR_DISCORD_BOT_TOKEN_HERE",
     "guild_id": "YOUR_GUILD_ID_HERE",
     "tag_channel_id": "YOUR_TAG_CHANNEL_ID_HERE",
+    "openai_api_key": "YOUR_OPENAI_API_KEY_HERE",
     "game_settings": {
         "dodge_timeout": 30,
         "min_players": 2,
@@ -12,6 +13,7 @@
     "dodge_mechanisms": [
         "math_challenge",
         "rock_paper_scissors", 
-        "word_scramble"
+        "word_scramble",
+        "ai_trivia_challenge"
     ]
 } 
